@@ -1,7 +1,8 @@
 Data/
-data/
 *.csv
-*.parquet
+*.rds
 *.zip
+*.parquet
 .Rhistory
 .RData
+.DS_Store
