@@ -1,4 +1,5 @@
 if (!require("pacman")) install.packages("pacman")
+library(data.table)
 pacman::p_load(data.table, here, glue)
 
 if (dir.exists("Data")) {
@@ -47,6 +48,35 @@ if(file.exists(output_file_net_pay)) file.remove(output_file_net_pay)
 
 cols_net_keep <- c("Year", "from_npi", "to_npi")
 years <- sort(unique(dt_net$Year))
+
+mapping_file <- file.path(data_root, "NPIHRRMapping", "Master_NPI_HRR_Mapping_2015_2018.csv")
+npi_hrr_panel <- fread(mapping_file)
+
+npi_hrr_panel[, `:=`(year = as.integer(year), npi = as.character(npi))]
+
+dt_net[, Year := as.integer(Year)]
+dt_net[, from_npi := as.character(from_npi)]
+dt_net[, to_npi := as.character(to_npi)]
+
+if(exists("dt_pay")) {
+  dt_pay[, Year := as.integer(Year)]
+  dt_pay[, NPI := as.character(NPI)]
+}
+
+# Map from_npi
+dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "from_npi"), by.y = c("year", "npi"), all.x = TRUE)
+setnames(dt_net, "hrrnum", "hrrnum_from")
+
+# Map to_npi
+dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "to_npi"), by.y = c("year", "npi"), all.x = TRUE)
+setnames(dt_net, "hrrnum", "hrrnum_to")
+
+if(exists("dt_pay")) {
+  dt_pay <- merge(dt_pay, npi_hrr_panel, by.x = c("Year", "NPI"), by.y = c("year", "npi"), all.x = TRUE)
+  setnames(dt_pay, "hrrnum", "hrrnum_pay")
+}
+
+cols_net_keep <- c("Year", "from_npi", "to_npi", "hrrnum_from", "hrrnum_to")
 
 for (y in years) {
   message(glue("    Processing Year: {y} ..."))
@@ -123,7 +153,6 @@ for (y in years) {
   rm(chunk_t, net_y, rx_y); gc()
 }
 
-
 # Payment+Prescription
 message(">>> Merging Payment + Prescription (Chunked by Year)...")
 
@@ -143,7 +172,7 @@ for (target_year in common_years) {
   rx_y  <- dt_rx[Year == target_year]
   
   if(nrow(pay_y) == 0 || nrow(rx_y) == 0) next
-
+  
   chunk_pay_rx <- merge(
     pay_y, rx_y,
     by = c("Year", "NPI"), 
