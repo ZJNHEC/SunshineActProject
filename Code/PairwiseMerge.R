@@ -1,127 +1,94 @@
-if (!require("pacman")) install.packages("pacman")
 library(data.table)
-pacman::p_load(data.table, here, glue)
-
-if (dir.exists("Data")) {
-  data_root <- "Data"
-} else if (dir.exists("../Data")) {
-  data_root <- "../Data"
-} else {
-  data_root <- here("Data")
-}
+library(glue)
 
 input_dir <- file.path(data_root, "Final_Master_Tables")
 output_dir <- file.path(data_root, "Merged_Pairs_Undirected") 
 if(!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
+temp_file_d <- "D:/temp_Pair_Network_Payment_Undirected.csv.gz"
+output_file_e <- file.path(output_dir, "Pair_Network_Payment_Undirected.csv.gz")
+
+if(file.exists(temp_file_d)) file.remove(temp_file_d)
+
 message(">>> Loading Master Tables...")
 
-dt_net <- fread(file.path(input_dir, "Master_Network_2015_2018.csv"))
-dt_pay <- fread(file.path(input_dir, "Master_Payments_2015_2018.csv"))
-dt_rx  <- fread(file.path(input_dir, "Master_Prescriptions_2015_2018.csv"))
+dt_net <- fread(file.path(input_dir, "Master_Network_2015_2018.csv"), colClasses = "character")
+dt_pay <- fread(file.path(input_dir, "Master_Payments_2015_2018.csv"), colClasses = "character")
+npi_hrr_panel <- fread(file.path(data_root, "NPIHRRMapping", "Master_NPI_HRR_Mapping_2015_2018.csv"), colClasses = "character")
 
+npi_hrr_panel <- npi_hrr_panel[, .(year, npi, hrrnum)]
 
-if("source" %in% names(dt_net)) setnames(dt_net, "source", "from_npi")
-if("target" %in% names(dt_net)) setnames(dt_net, "target", "to_npi")
+if("source" %in% names(dt_net)) setnames(dt_net, "source", "A_npi")
+if("target" %in% names(dt_net)) setnames(dt_net, "target", "B_npi")
+if("transaction_count" %in% names(dt_net)) setnames(dt_net, "transaction_count", "shared_patient")
 
-cols_int_net <- c("Year", "from_npi", "to_npi")
-dt_net[, (cols_int_net) := lapply(.SD, as.integer), .SDcols = cols_int_net]
-
-cols_int_pay <- c("Year", "NPI")
-dt_pay[, (cols_int_pay) := lapply(.SD, as.integer), .SDcols = cols_int_pay]
-
-dt_rx[, Year := as.integer(Year)]
-dt_rx[, NPI := as.integer(NPI)]
-
-initial_rows <- nrow(dt_pay)
+dt_pay[, Amount := as.numeric(Amount)]
 dt_pay <- dt_pay[Amount > 20]
-message(glue(">>> Filtered Payments: Reduced from {initial_rows} to {nrow(dt_pay)} rows (kept > $20 only)."))
+setnames(dt_pay, old = c("NPI", "Payer", "Amount", "Nature"), new = c("receiver_npi", "payer", "amount", "nature"), skip_absent = TRUE)
 
-gc()
+message(">>> Mapping HRR...")
 
+dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "A_npi"), by.y = c("year", "npi"), all.x = TRUE)
+setnames(dt_net, "hrrnum", "A_hrr")
 
-# Network+Payment
-message(">>> Merging Network + Payments (Sequential Processing)...")
+dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "B_npi"), by.y = c("year", "npi"), all.x = TRUE)
+setnames(dt_net, "hrrnum", "B_hrr")
 
-output_file_net_pay <- file.path(output_dir, "Pair_Network_Payment_Undirected.csv")
-if(file.exists(output_file_net_pay)) file.remove(output_file_net_pay)
+dt_pay <- merge(dt_pay, npi_hrr_panel, by.x = c("Year", "receiver_npi"), by.y = c("year", "npi"), all.x = TRUE)
+setnames(dt_pay, "hrrnum", "receiver_hrr")
 
-cols_net_keep <- c("Year", "from_npi", "to_npi")
+final_cols <- c("Year", "A_npi", "A_hrr", "B_npi", "B_hrr", "shared_patient", "payer", "amount", "nature", "receiver_npi", "receiver_hrr")
+
+#Temporary saving in D drive
 years <- sort(unique(dt_net$Year))
-
-mapping_file <- file.path(data_root, "NPIHRRMapping", "Master_NPI_HRR_Mapping_2015_2018.csv")
-npi_hrr_panel <- fread(mapping_file)
-
-npi_hrr_panel[, `:=`(year = as.integer(year), npi = as.character(npi))]
-
-dt_net[, Year := as.integer(Year)]
-dt_net[, from_npi := as.character(from_npi)]
-dt_net[, to_npi := as.character(to_npi)]
-
-if(exists("dt_pay")) {
-  dt_pay[, Year := as.integer(Year)]
-  dt_pay[, NPI := as.character(NPI)]
-}
-
-# Map from_npi
-dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "from_npi"), by.y = c("year", "npi"), all.x = TRUE)
-setnames(dt_net, "hrrnum", "hrrnum_from")
-
-# Map to_npi
-dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "to_npi"), by.y = c("year", "npi"), all.x = TRUE)
-setnames(dt_net, "hrrnum", "hrrnum_to")
-
-if(exists("dt_pay")) {
-  dt_pay <- merge(dt_pay, npi_hrr_panel, by.x = c("Year", "NPI"), by.y = c("year", "npi"), all.x = TRUE)
-  setnames(dt_pay, "hrrnum", "hrrnum_pay")
-}
-
-cols_net_keep <- c("Year", "from_npi", "to_npi", "hrrnum_from", "hrrnum_to")
+message(">>> Merging and writing to D Drive (GZIP compression enabled)...")
 
 for (y in years) {
-  message(glue("    Processing Year: {y} ..."))
-  net_y <- dt_net[Year == y, ..cols_net_keep]
+  message(sprintf("    Processing Year: %s ...", y))
+  
+  net_y <- dt_net[Year == y]
   pay_y <- dt_pay[Year == y]
   
-  if(nrow(net_y) == 0 || nrow(pay_y) == 0) {
-    message("      No data for this year, skipping.")
-    next
-  }
-  
-  # A. Source
-  chunk_source <- merge(
+  if(nrow(net_y) == 0 || nrow(pay_y) == 0) next
+
+  chunk_A <- merge(
     net_y, pay_y,
-    by.x = c("Year", "from_npi"),
-    by.y = c("Year", "NPI"),
-    all.x = TRUE, 
+    by.x = c("Year", "A_npi"),
+    by.y = c("Year", "receiver_npi"),
+    all = FALSE, 
     allow.cartesian = TRUE 
   )
   
-  if(nrow(chunk_source) > 0) {
-    chunk_source[, `:=`(Role = "Source", Target_NPI = from_npi)]
-    fwrite(chunk_source, output_file_net_pay, append = TRUE)
+  if(nrow(chunk_A) > 0) {
+    chunk_A[, receiver_npi := A_npi]
+    chunk_A <- chunk_A[, ..final_cols]
+    fwrite(chunk_A, temp_file_d, append = TRUE, compress = "gzip")
   }
+  rm(chunk_A); gc()
   
-  rm(chunk_source); gc()
-  
-  # B. Target
-  chunk_target <- merge(
+  chunk_B <- merge(
     net_y, pay_y,
-    by.x = c("Year", "to_npi"),
-    by.y = c("Year", "NPI"),
-    all.x = TRUE, 
+    by.x = c("Year", "B_npi"),
+    by.y = c("Year", "receiver_npi"),
+    all = FALSE,
     allow.cartesian = TRUE
   )
   
-  if(nrow(chunk_target) > 0) {
-    chunk_target[, `:=`(Role = "Target", Target_NPI = to_npi)]
-    fwrite(chunk_target, output_file_net_pay, append = TRUE)
+  if(nrow(chunk_B) > 0) {
+    chunk_B[, receiver_npi := B_npi]
+    chunk_B <- chunk_B[, ..final_cols]
+    fwrite(chunk_B, temp_file_d, append = TRUE, compress = "gzip")
   }
-  rm(chunk_target, net_y, pay_y); gc()
+  rm(chunk_B, net_y, pay_y); gc()
 }
 
-message("Network + Payment merge complete.")
+message(">>> Moving compressed file back to E Drive...")
 
+if(file.exists(output_file_e)) file.remove(output_file_e)
+file.copy(from = temp_file_d, to = output_file_e, overwrite = TRUE)
+file.remove(temp_file_d)
+
+message(">>> Process complete.")
 # Network + Prescription (too big, I didn't do this)
 message(">>> Merging Network + Prescriptions (Loop per year)...")
 out_file_rx <- file.path(output_dir, "Pair_Network_Prescription_Undirected.csv")
