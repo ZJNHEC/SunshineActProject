@@ -81,7 +81,6 @@ cat("==========================================\n")
 p_hrr <- ggplot(hrr_final, aes(x = mean_avg_degree, y = mean_payment_per_capita)) +
   geom_point(alpha = 0.7, color = "steelblue", size = 3) +
   geom_smooth(method = "lm", color = "darkred", fill = "red", alpha = 0.1, se = TRUE) +
-  # 自动给排名前 5 的土豪 HRR 打上标签，看看是哪些城市
   geom_text_repel(
     data = head(hrr_final[order(-mean_payment_per_capita)], 5),
     aes(label = paste("HRR:", hrrnum)),
@@ -208,4 +207,86 @@ p_lagged_trimmed <- ggplot(lagged_panel_trimmed, aes(x = Payment_t, y = Network_
   theme(text = element_text(size = 12))
 
 print(p_lagged_trimmed)
+
+# Compare the degree of those who did/did not receive payment
+con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+sql_pay <- sprintf("
+  SELECT 
+    CAST(Year AS INTEGER) AS Year, 
+    NPI AS npi, 
+    SUM(CAST(Amount AS DOUBLE)) AS total_payment
+  FROM read_csv_auto('%s', all_varchar=true)
+  WHERE NPI IS NOT NULL AND CAST(Amount AS DOUBLE) > 20
+  GROUP BY Year, NPI
+", pay_file)
+
+phys_pay <- setDT(dbGetQuery(con, sql_pay))
+dbDisconnect(con, shutdown = TRUE)
+
+analysis_dt <- merge(physician_degree, phys_pay, by = c("Year", "npi"), all.x = TRUE)
+
+analysis_dt[is.na(total_payment), total_payment := 0]
+
+analysis_dt[, payment_status := ifelse(total_payment > 0, "Received Payment", "No Payment")]
+
+compare_stats <- analysis_dt[, .(
+  Physician_Count = .N,
+  Mean_Degree = mean(degree, na.rm = TRUE),
+  Median_Degree = as.numeric(median(degree, na.rm = TRUE)),
+  SD_Degree = sd(degree, na.rm = TRUE)
+), by = payment_status]
+
+compare_stats <- compare_stats[order(payment_status)]
+print(compare_stats)
+
+test_result <- wilcox.test(degree ~ payment_status, data = analysis_dt, exact = FALSE)
+
+cat(sprintf("✅ P-value: %s\n", format.pval(test_result$p.value, eps = 0.001)))
+
+
+p_box <- ggplot(analysis_dt, aes(x = payment_status, y = degree, fill = payment_status)) +
+  geom_boxplot(alpha = 0.7, outlier.alpha = 0.05, outlier.size = 0.5) +
+  scale_y_log10(labels = comma) + 
+  scale_fill_manual(values = c("No Payment" = "grey75", "Received Payment" = "steelblue")) +
+  labs(
+    title = "Physician Network Centrality: Paid vs. Unpaid Physicians",
+    subtitle = sprintf("Wilcoxon P-value: %s", format.pval(test_result$p.value, eps = 0.001)),
+    x = "",
+    y = "Degree (Number of Connections, Log 10 Scale)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",
+    text = element_text(size = 14),
+    axis.text.x = element_text(face = "bold")
+  )
+
+print(p_box)
+
+# Comparison with lagged model
+pay_t <- phys_pay[, .(npi, Year, total_payment)]
+pay_t[, match_year := Year + 1] 
+
+deg_t1 <- physician_degree[, .(npi, Year, degree)]
+setnames(deg_t1, old = "Year", new = "match_year")
+
+lagged_micro <- merge(deg_t1, pay_t, by = c("npi", "match_year"), all.x = TRUE)
+
+lagged_micro[is.na(total_payment), total_payment := 0]
+
+lagged_micro[, payment_status_t := ifelse(total_payment > 0, "Received Payment (Year t)", "No Payment (Year t)")]
+
+lagged_stats <- lagged_micro[, .(
+  Physician_Count = .N,
+  Mean_Degree_t1 = mean(degree, na.rm = TRUE),
+  Median_Degree_t1 = as.numeric(median(degree, na.rm = TRUE))
+), by = payment_status_t]
+
+print(lagged_stats[order(payment_status_t)])
+
+wilcox_lagged <- wilcox.test(degree ~ payment_status_t, data = lagged_micro, exact = FALSE)
+
+cat("\n==========================================\n")
+cat(sprintf("✅ Wilcoxon P-value: %s\n", format.pval(wilcox_lagged$p.value, eps = 0.001)))
+cat("==========================================\n")
 
