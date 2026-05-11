@@ -57,10 +57,6 @@ fwrite(npi_hrr_panel, output_file)
 
 message("Save complete! Panel data is ready at: ", output_file)
 
-# Possible Robustness check for those who have changed their HRR
-# movers_file <- file.path(mapping_dir, "Movers_to_npi015_2018.csv")
-# fwrite(movers_analysis, movers_file)
-
 movers_analysis <- npi_hrr_panel %>%
   filter(!is.na(hrrnum)) %>%
   group_by(npi) %>%

@@ -34,6 +34,8 @@ setnames(dt_net, "hrrnum", "A_hrr")
 dt_net <- merge(dt_net, npi_hrr_panel, by.x = c("Year", "B_npi"), by.y = c("year", "npi"), all.x = TRUE)
 setnames(dt_net, "hrrnum", "B_hrr")
 
+dt_net <- dt_net[!is.na(A_hrr) & !is.na(B_hrr) & A_hrr == B_hrr]
+
 dt_pay <- merge(dt_pay, npi_hrr_panel, by.x = c("Year", "receiver_npi"), by.y = c("year", "npi"), all.x = TRUE)
 setnames(dt_pay, "hrrnum", "receiver_hrr")
 
@@ -55,9 +57,10 @@ for (y in years) {
     net_y, pay_y,
     by.x = c("Year", "A_npi"),
     by.y = c("Year", "receiver_npi"),
-    all = FALSE, 
+    all.x = TRUE, 
     allow.cartesian = TRUE 
   )
+  chunk_A[is.na(amount), amount := 0]
   
   if(nrow(chunk_A) > 0) {
     chunk_A[, receiver_npi := A_npi]
@@ -70,9 +73,10 @@ for (y in years) {
     net_y, pay_y,
     by.x = c("Year", "B_npi"),
     by.y = c("Year", "receiver_npi"),
-    all = FALSE,
+    all.x = TRUE,
     allow.cartesian = TRUE
   )
+  chunk_B[is.na(amount), amount := 0]
   
   if(nrow(chunk_B) > 0) {
     chunk_B[, receiver_npi := B_npi]
