@@ -1,0 +1,17 @@
+Introduction of different R files:
+The whole dataset is organized with this workflow:
+First, use DataCleaningAndIntegration.R to organize existing datasets and select columns; then, use PairwiseMerge.R to merge between different datasets (among DocGraph, OpenPayment and Medicare D) and NPIHRRMapping.R to map NPI to HRR.
+Afterwards, use DescriptiveAnalysis.R to understand the basics and NetworkPaymentAnalysis.R to conduct correlation analysis.
+
+For additional changes: 
+Use AddAdditionalColumns.R to add or remove information.
+
+Other than that:
+HypothesisAssistance.R is to select individual cases and ForTestingUse.R is not active now.
+
+Data involved in the whole workflow:
+DocGraph, Openpayments (now general payment only, should include research payment later), and Medicare D from 2015 till 2018; NPPES to map NPI to HRR and specialty.
+
+Notice:
+Data files are big so it is recommended to only include necessary columns whenever needed.
+This GitHub file only includes Code. Data should be put in a seperate \Data folder in parallel to \Code.
